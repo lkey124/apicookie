@@ -1,106 +1,194 @@
 const TelegramBot = require('node-telegram-bot-api');
 const http = require('http');
 
-const VERSION = '1.0.4-Optimized';
+const VERSION = '1.0.5-Fixed';
 const TOKEN = process.env.TELE_TOKEN;
 const TARGET_SERVER_URL = process.env.TARGET_URL || 'https://he-thong-cua-ban.com/login-endpoint';
 const PORT = process.env.PORT || 3000;
 
 if (!TOKEN) {
-  console.error('❌ Lỗi: Chưa cấu hình biến môi trường TELE_TOKEN!');
+  console.error('❌ Lỗi: Thiếu TELE_TOKEN trong biến môi trường!');
   process.exit(1);
 }
 
-// Cấu hình Bot
 const bot = new TelegramBot(TOKEN, { polling: true });
-// Tối ưu polling để giảm lag
-bot.removeAllListeners('polling_error'); // Bỏ qua cảnh báo polling nhỏ cho đỡ spam console
+const userHistory = {};
 
-// Bộ nhớ tạm với giới hạn để tối ưu RAM
-const MAX_HISTORY = 20; 
-const userHistory = {}; 
+console.log(`🤖 Bot v${VERSION} đang khởi động...`);
 
-/** 
- * Hàm dọn dẹp và giới hạn dữ liệu lịch sử 
- * @param {Number} chatId 
- * @param {Boolean} force - Xóa hết hay chỉ xóa hết hạn
- */
-function manageHistory(chatId, force = false) {
-  if (!userHistory[chatId]) return;
-  
-  const now = Date.now();
-  let history = userHistory[chatId];
-
-  // Lọc bỏ link đã hết hạn
-  if (force) {
-    userHistory[chatId] = [];
-  } else {
-    userHistory[chatId] = history.filter(item => item.expiresAt > now);
-  }
-  
-  // Giới hạn kích thước mảng (FIFO) nếu vượt quá MAX_HISTORY
-  if (userHistory[chatId].length > MAX_HISTORY) {
-    userHistory[chatId] = userHistory[chatId].slice(-MAX_HISTORY);
-  }
-}
-
-// Tính ngày hết hạn
+// Hàm tính thời hạn cookie
 function getExpirationTime(parsedJson) {
-  let minExpiry = Date.now() + 24 * 60 * 60 * 1000; // Mặc định 24h nếu không có cookie
-  let cookiesArray = null;
-  
-  if (Array.isArray(parsedJson)) cookiesArray = parsedJson;
-  else if (parsedJson.cookies && Array.isArray(parsedJson.cookies)) cookiesArray = parsedJson.cookies;
+  try {
+    let minExpiry = Date.now() + 86400000; // Mặc định 24h
+    let cookiesArray = null;
+    
+    if (Array.isArray(parsedJson)) cookiesArray = parsedJson;
+    else if (parsedJson.cookies && Array.isArray(parsedJson.cookies)) cookiesArray = parsedJson.cookies;
 
-  if (cookiesArray) {
-    cookiesArray.forEach(c => {
-      if (c.expirationDate) {
-        const expiryMs = c.expirationDate < 10000000000 ? c.expirationDate * 1000 : c.expirationDate;
-        if (expiryMs < minExpiry) minExpiry = expiryMs;
-      }
-    });
+    if (cookiesArray) {
+      cookiesArray.forEach(c => {
+        if (c.expirationDate) {
+          const expiryMs = c.expirationDate < 10000000000 ? c.expirationDate * 1000 : c.expirationDate;
+          if (expiryMs < minExpiry) minExpiry = expiryMs;
+        }
+      });
+    }
+    return minExpiry;
+  } catch (e) {
+    return Date.now() + 86400000;
   }
-  return minExpiry;
 }
 
-// HTTP Server giả lập để Render không tính timeout
+// Server giữ worker sống (Health Check)
 http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-  res.end(`✅ Bot v${VERSION} Online | RAM: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`);
-}).listen(PORT, () => console.log(`🌍 Server running on Port: ${PORT}`));
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end(`✅ Bot ${VERSION} Running!`);
+}).listen(PORT, () => console.log(`🌍 Port ${PORT} ready`));
 
-// Menu
-const mainMenu = {
+const menu = {
   reply_markup: {
     keyboard: [
       [{ text: '📜 Lịch sử link còn hạn' }],
       [{ text: '🔄 Khởi động lại Bot' }, { text: '📋 Hướng dẫn' }]
     ],
-    resize_keyboard: true,
-    one_time_keyboard: false
+    resize_keyboard: true
   }
 };
 
-// Xử lý /start
+// Xử lý lệnh /start
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
-  manageHistory(chatId); // Dọn dẹp khi khởi động lại
-  
-  const text = `👋 Xin chào *${msg.from.first_name}*!\n\n🤖 Phiên bản: *v${VERSION}*\n\n⚡ Tối ưu tốc độ & RAM.\n\n📥 *Cách dùng:*\nGửi nội dung JSON hoặc file .json/.txt.`;
-  
-  bot.sendMessage(chatId, text, { parse_mode: 'Markdown', ...mainMenu });
+  const welcome = `👋 Xin chào *${msg.from.first_name}*!\n\n🤖 Bot v${VERSION}\n\n📥 Gửi nội dung JSON hoặc file .json/.txt để tạo link.`;
+  bot.sendMessage(chatId, welcome, { parse_mode: 'Markdown', ...menu });
 });
 
-// Xử lý tin nhắn văn bản (Message)
+// Xử lý tin nhắn văn bản
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
-  if (!msg.text || msg.document || msg.photo || msg.chat.type === 'group') return;
-
+  if (!msg.text || msg.document) return;
+  
   const text = msg.text.trim();
 
-  // 1. Xử lý nút bấm (Menu Buttons)
+  // Xử lý nút menu 1
   if (text === '📜 Lịch sử link còn hạn') {
-    manageHistory(chatId); // Dọn dẹp phụ thuộc trước khi hiển thị
-    const history = userHistory[chatId] || [];
+    const now = Date.now();
+    const history = (userHistory[chatId] || []).filter(item => item.expiresAt > now);
     
-    if (history.length === 0)
+    if (history.length === 0) {
+      bot.sendMessage(chatId, '📭 Không có link nào còn hạn!', menu);
+      return;
+    }
+
+    let historyText = '📜 *DANH SÁCH LINK CÒN HẠN:*\n\n';
+    const inlineButtons = [];
+    
+    history.slice(0, 10).forEach((item, index) => {
+      const hoursLeft = ((item.expiresAt - now) / 3600000).toFixed(1);
+      historyText += `${index + 1}. ${item.name}\n⏳ Còn ${hoursLeft} giờ\n\n`;
+      inlineButtons.push([{ text: `🌐 Mở link ${index + 1}`, url: item.link }]);
+    });
+
+    bot.sendMessage(chatId, historyText, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: inlineButtons } });
+    return;
+  }
+
+  // Xử lý nút menu 2
+  if (text === '🔄 Khởi động lại Bot') {
+    bot.sendMessage(chatId, `🤖 Đã khởi động lại!\n\n🤖 Phiên bản: *v${VERSION}*`, { parse_mode: 'Markdown', ...menu });
+    return;
+  }
+
+  // Xử lý nút menu 3
+  if (text === '📋 Hướng dẫn') {
+    bot.sendMessage(chatId, '📝 Gửi nội dung JSON dạng text hoặc file .txt/.json đính kèm.', menu);
+    return;
+  }
+
+  // ⚠️ Bỏ qua các tin nhắn lệch (commands, tin nhắn nhóm)
+  if (text.startsWith('/')) return;
+  if (msg.chat.type !== 'private') return;
+
+  // ✨ XỬ LÝ JSON TRỰC TIẾP
+  const startTime = Date.now();
+  try {
+    const parsedJson = JSON.parse(text);
+    const jsonString = JSON.stringify(parsedJson);
+    
+    // Mã hóa Base64 an toàn cho URL (URL-safe)
+    const safeToken = Buffer.from(jsonString).toString('base64')
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      
+    const finalLoginLink = `${TARGET_SERVER_URL}?auth_token=${safeToken}`;
+    const executionTime = Date.now() - startTime;
+    const expiresAt = getExpirationTime(parsedJson);
+
+    // Lưu vào lịch sử (giới hạn 10 link gần nhất)
+    if (!userHistory[chatId]) userHistory[chatId] = [];
+    userHistory[chatId].push({ 
+      name: `Tin nhắn lúc ${new Date().toLocaleTimeString('vi-VN')}`, 
+      link: finalLoginLink, 
+      expiresAt: expiresAt 
+    });
+    
+    if (userHistory[chatId].length > 10) userHistory[chatId].shift();
+
+    bot.sendMessage(chatId, `✅ *Xử lý thành công!*\n\n⚡ Thời gian: \`${executionTime} ms\``, { 
+      parse_mode: 'Markdown',
+      reply_markup: { 
+        inline_keyboard: [[{ text: '🌐 Mở liên kết đăng nhập', url: finalLoginLink }]] 
+      } 
+    });
+
+  } catch (error) {
+    // Không làm gì cả để tránh spam lỗi khi người dùng chat thường
+  }
+});
+
+// XỬ LÝ FILE ĐÍNH KÈM
+bot.on('document', async (msg) => {
+  const chatId = msg.chat.id;
+  const fileId = msg.document.file_id;
+  const fileName = msg.document.file_name;
+  const startTime = Date.now();
+
+  try {
+    const loadingMsg = await bot.sendMessage(chatId, `⏳ Đang xử lý file: ${fileName}...`);
+
+    const rawContent = await new Promise((resolve, reject) => {
+      const stream = bot.getFileStream(fileId);
+      const chunks = [];
+      
+      stream.on('data', (chunk) => chunks.push(chunk));
+      stream.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+      stream.on('error', reject);
+    });
+
+    const parsedJson = JSON.parse(rawContent.trim());
+    const jsonString = JSON.stringify(parsedJson);
+    const safeToken = Buffer.from(jsonString).toString('base64')
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      
+    const finalLoginLink = `${TARGET_SERVER_URL}?auth_token=${safeToken}`;
+    const executionTime = Date.now() - startTime;
+    const expiresAt = getExpirationTime(parsedJson);
+
+    if (!userHistory[chatId]) userHistory[chatId] = [];
+    userHistory[chatId].push({ name: fileName, link: finalLoginLink, expiresAt: expiresAt });
+    if (userHistory[chatId].length > 10) userHistory[chatId].shift();
+
+    bot.deleteMessage(chatId, loadingMsg.message_id).catch(() => {});
+    
+    bot.sendMessage(chatId, `✅ *Xử lý file thành công!*\n\n⚡ Thời gian: \`${executionTime} ms\``, { 
+      parse_mode: 'Markdown',
+      reply_markup: { 
+        inline_keyboard: [[{ text: '🌐 Mở liên kết đăng nhập', url: finalLoginLink }]] 
+      } 
+    });
+    
+  } catch (error) {
+    console.error("❌ Lỗi xử lý file:", error.message);
+    bot.sendMessage(chatId, '❌ File không đúng định dạng JSON!', menu);
+  }
+});
+
+console.log('🤖 Bot sẵn sàng nhận dữ liệu.');
