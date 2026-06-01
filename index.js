@@ -1,17 +1,24 @@
 import TelegramBot from 'node-telegram-bot-api';
 import http from 'http';
+import https from 'https';
 
-// 1. Cấu hình bảo mật và Cổng mạng từ Render
+// ===================================================
+// 📌 CẤU HÌNH PHIÊN BẢN (Bạn tự đổi số này mỗi lần sửa code nhé)
+// ===================================================
+const VERSION = '1.0.0'; 
+
+// Cấu hình bảo mật và Cổng mạng từ Render
 const TOKEN = process.env.TELE_TOKEN;
 const TARGET_SERVER_URL = process.env.TARGET_URL || 'https://he-thong-cua-ban.com/login-endpoint';
 const PORT = process.env.PORT || 3000;
+const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID; // ID Telegram của bạn để nhận thông báo tự động
 
 if (!TOKEN) {
   console.error('❌ Lỗi: Chưa cấu hình biến môi trường TELE_TOKEN trên Render!');
   process.exit(1);
 }
 
-// 2. Bộ nhớ tạm lưu lịch sử link theo từng người dùng (Tránh lộ link của nhau)
+// 2. Bộ nhớ tạm lưu lịch sử link theo từng người dùng
 const userHistory = {}; 
 
 // Hàm tự động quét và tính toán ngày hết hạn từ đống Cookies JSON
@@ -28,21 +35,18 @@ function getExpirationTime(parsedJson) {
   if (cookiesArray) {
     cookiesArray.forEach(c => {
       if (c.expirationDate) {
-        // Đổi timestamp dạng giây thành mili-giây nếu cần
         const expiryMs = c.expirationDate < 10000000000 ? c.expirationDate * 1000 : c.expirationDate;
         if (expiryMs < minExpiry) minExpiry = expiryMs;
       }
     });
   }
-
-  // Nếu file không có cookie hoặc không tìm thấy hạn dùng, mặc định cho hạn là 24h
   return minExpiry === Infinity ? Date.now() + 24 * 60 * 60 * 1000 : minExpiry;
 }
 
-// 3. Tạo Server giả lập mở cổng 3000 để Render luôn báo chữ "Live" màu xanh
+// 3. Tạo Server giả lập mở cổng để Render luôn báo chữ "Live" màu xanh
 http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-  res.end('Bot Telegram đang chạy online 24/7!');
+  res.end(`Bot Telegram phiên bản v${VERSION} đang chạy online 24/7!`);
 }).listen(PORT, () => {
   console.log(`🌍 Đã mở cổng giả lập thành công trên Port: ${PORT}`);
 });
@@ -51,7 +55,13 @@ http.createServer((req, res) => {
 const bot = new TelegramBot(TOKEN, { polling: true });
 bot.setMyCommands([{ command: 'start', description: 'Khởi động lại Bot và hiện Menu' }]);
 
-console.log('🤖 Bot Telegram xử lý JSON + Check hạn Cookie + Lịch sử đã sẵn sàng...');
+console.log(`🤖 Bot Telegram v${VERSION} xử lý JSON + Check hạn Cookie đã sẵn sàng...`);
+
+// 🚀 TỰ ĐỘNG THÔNG BÁO KHI UPDATE THÀNH CÔNG
+if (ADMIN_CHAT_ID) {
+  bot.sendMessage(ADMIN_CHAT_ID, `🚀 *Hệ thống thông báo:* Bot đã cập nhật thành công lên phiên bản *v${VERSION}* và đang hoạt động ổn định!`, { parse_mode: 'Markdown' })
+    .catch(err => console.log('Chưa gửi được tin nhắn khởi động tự động (Do chưa chat với bot bao giờ):', err.message));
+}
 
 // Cấu hình Menu phím tắt dưới khung chat (Reply Keyboard)
 const quickMenu = {
@@ -69,7 +79,7 @@ const quickMenu = {
 // TÍNH NĂNG 1: LỆNH CHÀO MỪNG (/start)
 // ==========================================
 bot.onText(/\/start/, (msg) => {
-  const welcomeText = `👋 Xin chào *${msg.from.first_name}*!\n\nTôi là Bot tự động tạo link đăng nhập từ mã JSON.\n\n📥 *Cách sử dụng:* \n👉 *Cách 1:* Dán trực tiếp đoạn chữ JSON vào ô chat.\n👉 *Cách 2:* Gửi một file chứa mã JSON (.txt hoặc .json).\n\n⚡ Bot đã tích hợp bộ đo tốc độ phản hồi và tự động quét hạn dùng Cookies lưu vào lịch sử!`;
+  const welcomeText = `👋 Xin chào *${msg.from.first_name}*!\n\n🤖 Phiên bản hiện tại: *v${VERSION}*\n\nTôi là Bot tự động tạo link đăng nhập từ mã JSON.\n\n📥 *Cách sử dụng:* \n👉 *Cách 1:* Dán trực tiếp đoạn chữ JSON vào ô chat.\n👉 *Cách 2:* Gửi một file chứa mã JSON (.txt hoặc .json).`;
   bot.sendMessage(msg.chat.id, welcomeText, { parse_mode: 'Markdown', ...quickMenu });
 });
 
@@ -79,18 +89,15 @@ bot.onText(/\/start/, (msg) => {
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
 
-  // Bỏ qua nếu tin nhắn không chứa văn bản chữ hoặc là file đính kèm
   if (!msg.text || msg.document) return;
   const text = msg.text.trim();
 
   if (text.startsWith('/start')) return;
 
-  // Xử lý nút xem lịch sử
   if (text === '📜 Lịch sử link còn hạn') {
     const history = userHistory[chatId] || [];
     const now = Date.now();
     
-    // Lọc bỏ những link cũ đã hết hạn sử dụng thực tế
     const validLinks = history.filter(item => item.expiresAt > now);
     userHistory[chatId] = validLinks; 
 
@@ -115,20 +122,17 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // Xử lý nút khởi động lại
   if (text === '🔄 Khởi động lại Bot (/start)') {
-    bot.sendMessage(chatId, '🤖 Đang khởi động lại...', quickMenu);
+    bot.sendMessage(chatId, `🤖 Đang khởi động lại...\n🤖 Phiên bản hiện tại: *v${VERSION}*`, quickMenu);
     return;
   }
 
-  // Xử lý nút xem hướng dẫn
   if (text === '📋 Xem hướng dẫn định dạng JSON') {
     const guideText = `📝 *Cấu trúc mẫu JSON hợp lệ:*\n\n\`\`\`json\n{\n  "username": "admin",\n  "role": "user",\n  "session": "123456"\n}\n\`\`\`\n\n⚠️ *Lưu ý:* Hãy chắc chắn dữ liệu được bọc trong dấu ngoặc nhọn \`{}\`.`;
-    bot.sendMessage(guideText, guideText, { parse_mode: 'Markdown', ...quickMenu });
+    bot.sendMessage(chatId, guideText, { parse_mode: 'Markdown', ...quickMenu });
     return;
   }
 
-  // Đo thời gian tính toán chuỗi chữ dán vào
   const startTime = Date.now();
   try {
     const parsedJson = JSON.parse(text);
@@ -138,7 +142,6 @@ bot.on('message', async (msg) => {
     const finalLoginLink = `${TARGET_SERVER_URL}?auth_token=${safeToken}`;
     const executionTime = Date.now() - startTime;
 
-    // Lưu vào lịch sử cá nhân
     const expiresAt = getExpirationTime(parsedJson);
     if (!userHistory[chatId]) userHistory[chatId] = [];
     userHistory[chatId].push({
@@ -174,16 +177,16 @@ bot.on('document', async (msg) => {
   const startTime = Date.now();
 
   try {
-    // Không dùng parse_mode ở đây để tránh lỗi đồng bộ nếu tên file chứa dấu gạch dưới "_"
     const loadingMsg = await bot.sendMessage(chatId, `⏳ Đang đọc dữ liệu từ file: ${fileName}...`);
 
-    // Tải file dạng Stream mã hóa trực tiếp
+    const fileLink = await bot.getFileLink(fileId);
+
     const rawContent = await new Promise((resolve, reject) => {
-      const stream = bot.getFileStream(fileId);
-      let data = '';
-      stream.on('data', chunk => data += chunk);
-      stream.on('end', () => resolve(data));
-      stream.on('error', err => reject(err));
+      https.get(fileLink, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => resolve(data));
+      }).on('error', err => reject(err));
     });
 
     const parsedJson = JSON.parse(rawContent.trim());
@@ -193,7 +196,6 @@ bot.on('document', async (msg) => {
     const finalLoginLink = `${TARGET_SERVER_URL}?auth_token=${safeToken}`;
     const executionTime = Date.now() - startTime;
 
-    // Lưu file vào lịch sử
     const expiresAt = getExpirationTime(parsedJson);
     if (!userHistory[chatId]) userHistory[chatId] = [];
     userHistory[chatId].push({
@@ -208,7 +210,6 @@ bot.on('document', async (msg) => {
       }
     };
 
-    // Xóa tin nhắn "Đang đọc..." tạm thời
     bot.deleteMessage(chatId, loadingMsg.message_id).catch(() => {});
 
     bot.sendMessage(chatId, `📄 *Xử lý file thành công!*\n\n📁 Tên file: \`${fileName}\`\n🔗 *Link đăng nhập:*\n${finalLoginLink}\n\n⚡ *Tổng thời gian xử lý:* \`${executionTime} ms\``, { 
