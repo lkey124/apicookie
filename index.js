@@ -1,7 +1,8 @@
 import TelegramBot from 'node-telegram-bot-api';
 import http from 'http';
+import fs from 'fs'; // 🚀 Thêm thư viện đọc file hệ thống của Node.js
 
-const VERSION = '1.0.1'; // Cập nhật lên bản v1.0.1 chống nghẽn file
+const VERSION = '1.0.2'; // Cập nhật lên bản v1.0.2 sửa lỗi bóc tách file tạm
 const TOKEN = process.env.TELE_TOKEN;
 const TARGET_SERVER_URL = process.env.TARGET_URL || 'https://he-thong-cua-ban.com/login-endpoint';
 const PORT = process.env.PORT || 3000;
@@ -114,13 +115,17 @@ bot.on('message', async (msg) => {
     userHistory[chatId].push({ name: `Văn bản dán lúc ${new Date().toLocaleTimeString('vi-VN')}`, link: finalLoginLink, expiresAt: expiresAt });
 
     const inlineKeyboard = { reply_markup: { inline_keyboard: [[{ text: '🌐 Mở liên kết đăng nhập ngay', url: finalLoginLink }]] } };
-    bot.sendMessage(chatId, `✅ *Xử lý JSON thành công!*\n\n🔗 *Link đăng nhập trực tiếp:*\n${finalLoginLink}\n\n⚡ *Thời gian tính toán:* \`${executionTime} ms\``, { parse_mode: 'Markdown', ...inlineKeyboard });
+    bot.sendMessage(chatId, `✅ *Xử lý JSON thành công!*\n\n🔗 *Link đăng nhập trực tiếp:*\n${finalLoginLink}\n\n⚡ *Thời gian tính toán:* \`${executionTime} ms\``, { 
+      parse_mode: 'Markdown',
+      ...inlineKeyboard 
+    });
+
   } catch (error) {
     bot.sendMessage(chatId, '⚠️ *Lỗi:* Nội dung dán vào không phải cấu trúc JSON hợp lệ.', quickMenu);
   }
 });
 
-// TÍNH NĂNG 2: XỬ LÝ FILE ĐÍNH KÈM (BẢN VÁ LỖI KHÔNG CHẠY)
+// TÍNH NĂNG 2: XỬ LÝ FILE ĐÍNH KÈM (ĐÃ SỬA LỖI ĐỌC FILE TẠM)
 bot.on('document', async (msg) => {
   const chatId = msg.chat.id;
   const fileId = msg.document.file_id;
@@ -130,11 +135,14 @@ bot.on('document', async (msg) => {
   try {
     const loadingMsg = await bot.sendMessage(chatId, `⏳ Đang đọc dữ liệu từ file: ${fileName}...`);
 
-    // 🚀 GIẢI PHÁP MỚI: Tải file trực tiếp thông qua hàm lấy Buffer tải về của Telegram API
-    const fileBuffer = await bot.downloadFile(fileId, "/tmp"); 
+    // Tải file về thư mục tạm /tmp trên Render, nhận về đường dẫn file
+    const filePath = await bot.downloadFile(fileId, "/tmp"); 
     
-    // Đọc Buffer nhị phân chuyển đổi thành chuỗi chữ UTF-8 siêu tốc
-    const rawContent = fileBuffer.toString('utf8');
+    // 🚀 Dùng fs đọc nội dung chữ thực tế bên trong đường dẫn file tạm đó
+    const rawContent = fs.readFileSync(filePath, 'utf8');
+
+    // Sau khi đọc xong, xóa file tạm này đi để tránh đầy bộ nhớ server Render
+    try { fs.unlinkSync(filePath); } catch (e) {}
 
     const parsedJson = JSON.parse(rawContent.trim());
     const jsonString = JSON.stringify(parsedJson);
@@ -148,7 +156,6 @@ bot.on('document', async (msg) => {
 
     const inlineKeyboard = { reply_markup: { inline_keyboard: [[{ text: '🌐 Mở liên kết đăng nhập ngay', url: finalLoginLink }]] } };
     
-    // Dọn dẹp tin nhắn chờ
     bot.deleteMessage(chatId, loadingMsg.message_id).catch(() => {});
     
     bot.sendMessage(chatId, `📄 *Xử lý file thành công!*\n\n📁 Tên file: \`${fileName}\`\n🔗 *Link đăng nhập:*\n${finalLoginLink}\n\n⚡ *Tổng thời gian xử lý:* \`${executionTime} ms\``, { parse_mode: 'Markdown', ...inlineKeyboard });
