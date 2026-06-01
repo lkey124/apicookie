@@ -2,7 +2,7 @@ import TelegramBot from 'node-telegram-bot-api';
 import http from 'http';
 import https from 'https'; 
 
-const VERSION = '3.0.2'; // Bản v3.0.2 - Chuyển sang định dạng HTML siêu an toàn
+const VERSION = '3.0.3'; // Bản v3.0.3 - Chống lỗi tin nhắn quá dài của Telegram
 const TOKEN = process.env.TELE_TOKEN;
 const TARGET_SERVER_URL = process.env.TARGET_URL || 'https://he-thong-cua-ban.com/login-endpoint';
 const PORT = process.env.PORT || 3000;
@@ -70,12 +70,13 @@ async function processJsonAndSendLink(chatId, jsonText, sourceName) {
 
     const inlineKeyboard = { reply_markup: { inline_keyboard: [[{ text: '🌐 Mở liên kết đăng nhập ngay', url: finalLoginLink }]] } };
     
-    await bot.sendMessage(chatId, `✅ <b>Xử lý thành công!</b>\n\n📁 Nguồn: <code>${sourceName}</code>\n🔗 <b>Link đăng nhập trực tiếp:</b>\n${finalLoginLink}\n\n⚡ <b>Thời gian tính toán:</b> <code>${executionTime} ms</code>`, {
+    // 🚀 BẢN VÁ CUỐI CÙNG: Ẩn link khỏi văn bản để không bao giờ bị vượt quá 4096 ký tự
+    await bot.sendMessage(chatId, `✅ <b>Xử lý thành công!</b>\n\n📁 Nguồn: <code>${sourceName}</code>\n🔗 <b>Trạng thái:</b> Đã ẩn link siêu dài an toàn vào nút bấm bên dưới.\n\n⚡ <b>Thời gian tính toán:</b> <code>${executionTime} ms</code>`, {
       parse_mode: 'HTML',
       ...inlineKeyboard
     });
   } catch (error) {
-    await bot.sendMessage(chatId, `⚠️ <b>Lỗi:</b> Dữ liệu từ <code>${sourceName}</code> không phải cấu trúc JSON hợp lệ.\n<i>(Chi tiết mã lỗi: ${error.message})</i>`, {
+    await bot.sendMessage(chatId, `⚠️ <b>Lỗi:</b> Dữ liệu từ <code>${sourceName}</code> không hợp lệ.\n<i>(Chi tiết mã lỗi: ${error.message})</i>`, {
       parse_mode: 'HTML',
       ...quickMenu
     });
