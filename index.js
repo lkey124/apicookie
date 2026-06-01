@@ -2,10 +2,21 @@ import TelegramBot from 'node-telegram-bot-api';
 import http from 'http';
 import https from 'https'; 
 
-const VERSION = '3.0.3'; // Bản v3.0.3 - Chống lỗi tin nhắn quá dài của Telegram
+const VERSION = '4.0.1'; // Bản cập nhật danh sách App: Thêm Facebook, ChatGPT
 const TOKEN = process.env.TELE_TOKEN;
-const TARGET_SERVER_URL = process.env.TARGET_URL || 'https://he-thong-cua-ban.com/login-endpoint';
 const PORT = process.env.PORT || 3000;
+
+// =========================================================================
+// 📌 KHU VỰC CẤU HÌNH DANH SÁCH APP VÀ LINK SERVER THẬT CỦA ANH
+// (Anh thay các link 'https://he-thong-...' thành link web Vercel/React của anh nhé)
+// =========================================================================
+const APP_SERVERS = {
+'vieon.vn': process.env.VIEON_URL || 'https://vieon.vn',
+'netflix.com': process.env.NETFLIX_URL || 'https://www.netflix.com',
+'facebook.com': process.env.FB_URL || 'https://www.facebook.com',
+'chatgpt.com': process.env.GPT_URL || 'https://chat.openai.com',
+'openai.com': process.env.OPENAI_URL || 'https://openai.com'
+};
 
 if (!TOKEN) {
   console.error('❌ Lỗi: Chưa cấu hình biến môi trường TELE_TOKEN trên Render!');
@@ -31,6 +42,7 @@ function getExpirationTime(parsedJson) {
   return minExpiry === Infinity ? Date.now() + 24 * 60 * 60 * 1000 : minExpiry;
 }
 
+// Giữ cổng Live cho Render
 http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
   res.end(`Bot Telegram phiên bản v${VERSION} đang chạy online 24/7!`);
@@ -52,47 +64,94 @@ const quickMenu = {
   }
 };
 
-// Hàm xử lý lõi
+bot.onText(/\/start/, (msg) => {
+  const welcomeText = `👋 Xin chào <b>${msg.from.first_name}</b>!\n\n🤖 Phiên bản hiện tại: <b>v${VERSION}</b>\n\nTôi là Bot tự động tạo link đăng nhập thông minh.\n\n📥 <b>Tính năng:</b> Tự động quét JSON, nhận diện App (VieON, Netflix, Facebook, ChatGPT...) và xuất trả File đính kèm + Link Server!`;
+  bot.sendMessage(msg.chat.id, welcomeText, { parse_mode: 'HTML', ...quickMenu });
+});
+
+// HÀM XỬ LÝ LÕI VÀ TỰ ĐỘNG NHẬN DIỆN APP
 async function processJsonAndSendLink(chatId, jsonText, sourceName) {
   const startTime = Date.now();
   try {
     const cleanText = jsonText.replace(/^\uFEFF/, '').trim();
     const parsedJson = JSON.parse(cleanText);
     
+    // 🚀 BƯỚC 1: TỰ ĐỘNG PHÂN TÍCH VÀ NHẬN DIỆN TÊN MIỀN GỐC CỦA FILE JSON
+    let detectedDomain = '';
+    if (parsedJson.url) {
+      try { detectedDomain = new URL(parsedJson.url).hostname; } catch(e) { detectedDomain = parsedJson.url; }
+    } else {
+      let cookiesArray = Array.isArray(parsedJson) ? parsedJson : (parsedJson.cookies || []);
+      if (cookiesArray.length > 0 && cookiesArray[0].domain) {
+        detectedDomain = cookiesArray[0].domain;
+      }
+    }
+
+    // Làm sạch tên miền
+    if (detectedDomain.startsWith('.')) detectedDomain = detectedDomain.substring(1);
+    detectedDomain = detectedDomain.replace('www.', '').toLowerCase();
+
+    // 🚀 BƯỚC 2: KIỂM TRA XEM DOMAIN NÀY THUỘC APP NÀO ĐỂ LẤY LINK SERVER TƯƠNG ỨNG
+    let baseServerUrl = '';
+    let appName = 'Chưa xác định';
+
+    for (const key of Object.keys(APP_SERVERS)) {
+      if (detectedDomain.includes(key)) {
+        baseServerUrl = APP_SERVERS[key];
+        // Đặt tên đẹp để hiển thị
+        if (key === 'chatgpt.com' || key === 'openai.com') appName = 'CHATGPT';
+        else if (key === 'facebook.com') appName = 'FACEBOOK';
+        else appName = key.toUpperCase(); 
+        break;
+      }
+    }
+
+    // Nếu file lạ không nằm trong danh sách cấu hình sẵn
+    if (!baseServerUrl) {
+      baseServerUrl = parsedJson.url || `https://${detectedDomain}`;
+      appName = `Gốc (${detectedDomain})`;
+    }
+
+    // 🚀 BƯỚC 3: MÃ HÓA VÀ ĐÓNG GÓI LINK ĐÍCH THẬT
     const jsonString = JSON.stringify(parsedJson);
     const safeToken = Buffer.from(jsonString).toString('base64');
-    const finalLoginLink = `${TARGET_SERVER_URL}?auth_token=${safeToken}`;
+    const finalLoginLink = `${baseServerUrl}?auth_token=${safeToken}`;
     const executionTime = Date.now() - startTime;
 
+    // Lưu lịch sử
     const expiresAt = getExpirationTime(parsedJson);
     if (!userHistory[chatId]) userHistory[chatId] = [];
-    userHistory[chatId].push({ name: sourceName, link: finalLoginLink, expiresAt: expiresAt });
+    userHistory[chatId].push({ name: `${appName} - ${sourceName}`, link: finalLoginLink, expiresAt: expiresAt });
 
-    const inlineKeyboard = { reply_markup: { inline_keyboard: [[{ text: '🌐 Mở liên kết đăng nhập ngay', url: finalLoginLink }]] } };
+    const inlineKeyboard = { reply_markup: { inline_keyboard: [[{ text: `🌐 Mở liên kết ${appName} ngay`, url: finalLoginLink }]] } };
     
-    // 🚀 BẢN VÁ CUỐI CÙNG: Ẩn link khỏi văn bản để không bao giờ bị vượt quá 4096 ký tự
-    await bot.sendMessage(chatId, `✅ <b>Xử lý thành công!</b>\n\n📁 Nguồn: <code>${sourceName}</code>\n🔗 <b>Trạng thái:</b> Đã ẩn link siêu dài an toàn vào nút bấm bên dưới.\n\n⚡ <b>Thời gian tính toán:</b> <code>${executionTime} ms</code>`, {
+    // Tạo file đính kèm chứa link để tránh lỗi quá dài của Telegram
+    const linkBuffer = Buffer.from(finalLoginLink, 'utf8');
+    const fileOptions = { filename: `Link_Dang_Nhap_${appName}.txt`, contentType: 'text/plain' };
+
+    const captionMsg = `✅ <b>Xử lý & Nhận diện thành công!</b>\n\n🎯 <b>Ứng dụng phát hiện:</b> <code>${appName}</code>\n🌍 <b>Server đích đã trỏ:</b> <code>${baseServerUrl}</code>\n\n🔗 <i>Anh có thể tải file đính kèm dưới đây để copy link, hoặc bấm nút mở thẳng!</i>\n\n⚡ <b>Thời gian xử lý:</b> <code>${executionTime} ms</code>`;
+
+    await bot.sendDocument(chatId, linkBuffer, {
+      caption: captionMsg,
       parse_mode: 'HTML',
       ...inlineKeyboard
-    });
+    }, fileOptions);
+
   } catch (error) {
-    await bot.sendMessage(chatId, `⚠️ <b>Lỗi:</b> Dữ liệu từ <code>${sourceName}</code> không hợp lệ.\n<i>(Chi tiết mã lỗi: ${error.message})</i>`, {
+    await bot.sendMessage(chatId, `⚠️ <b>Lỗi:</b> Dữ liệu cấu trúc JSON từ file không hợp lệ.\n<i>(Mã lỗi: ${error.message})</i>`, {
       parse_mode: 'HTML',
       ...quickMenu
     });
   }
 }
 
+// LUỒNG LẮNG NGHE TIN NHẮN
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
 
   if (msg.text) {
     const text = msg.text.trim();
-    
-    if (text.startsWith('/start') || text === '🔄 Khởi động lại Bot (/start)') {
-      const welcomeText = `👋 Xin chào <b>${msg.from.first_name}</b>!\n\n🤖 Phiên bản hiện tại: <b>v${VERSION}</b>\n\nTôi là Bot tự động tạo link đăng nhập từ mã JSON.\n\n📥 <b>Cách sử dụng:</b> \n👉 <b>Cách 1:</b> dán trực tiếp đoạn chữ JSON vào ô chat.\n👉 <b>Cách 2:</b> Gửi một file chứa mã JSON (.txt hoặc .json).`;
-      return bot.sendMessage(chatId, welcomeText, { parse_mode: 'HTML', ...quickMenu });
-    }
+    if (text.startsWith('/start') || text === '🔄 Khởi động lại Bot (/start)') return;
 
     if (text === '📜 Lịch sử link còn hạn') {
       const history = userHistory[chatId] || [];
@@ -128,7 +187,7 @@ bot.on('message', async (msg) => {
     let loadingMsg;
 
     try {
-      loadingMsg = await bot.sendMessage(chatId, `⏳ Đang tải và đọc dữ liệu từ file: <code>${fileName}</code>...`, { parse_mode: 'HTML' });
+      loadingMsg = await bot.sendMessage(chatId, `⏳ Đang tải và tự động quét dữ liệu từ file: <code>${fileName}</code>...`, { parse_mode: 'HTML' });
 
       const file = await bot.getFile(fileId);
       const fileUrl = `https://api.telegram.org/file/bot${TOKEN}/${file.file_path}`;
