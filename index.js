@@ -1,8 +1,7 @@
 import TelegramBot from 'node-telegram-bot-api';
 import http from 'http';
-import fs from 'fs'; // 🚀 Thêm thư viện đọc file hệ thống của Node.js
 
-const VERSION = '1.0.2'; // Cập nhật lên bản v1.0.2 sửa lỗi bóc tách file tạm
+const VERSION = '1.0.3'; // Cập nhật lên bản v1.0.3 xử lý file trực tiếp trên RAM
 const TOKEN = process.env.TELE_TOKEN;
 const TARGET_SERVER_URL = process.env.TARGET_URL || 'https://he-thong-cua-ban.com/login-endpoint';
 const PORT = process.env.PORT || 3000;
@@ -125,7 +124,7 @@ bot.on('message', async (msg) => {
   }
 });
 
-// TÍNH NĂNG 2: XỬ LÝ FILE ĐÍNH KÈM (ĐÃ SỬA LỖI ĐỌC FILE TẠM)
+// TÍNH NĂNG 2: XỬ LÝ FILE ĐÍNH KÈM (BẢN VÁ LỖI XỬ LÝ TRÊN RAM)
 bot.on('document', async (msg) => {
   const chatId = msg.chat.id;
   const fileId = msg.document.file_id;
@@ -135,14 +134,18 @@ bot.on('document', async (msg) => {
   try {
     const loadingMsg = await bot.sendMessage(chatId, `⏳ Đang đọc dữ liệu từ file: ${fileName}...`);
 
-    // Tải file về thư mục tạm /tmp trên Render, nhận về đường dẫn file
-    const filePath = await bot.downloadFile(fileId, "/tmp"); 
-    
-    // 🚀 Dùng fs đọc nội dung chữ thực tế bên trong đường dẫn file tạm đó
-    const rawContent = fs.readFileSync(filePath, 'utf8');
-
-    // Sau khi đọc xong, xóa file tạm này đi để tránh đầy bộ nhớ server Render
-    try { fs.unlinkSync(filePath); } catch (e) {}
+    // 🚀 GIẢI PHÁP ĐỘC QUYỀN CHO RENDER FREE: Đọc luồng dữ liệu trực tiếp chuyển thành chuỗi chữ trên RAM
+    const rawContent = await new Promise((resolve, reject) => {
+      const stream = bot.getFileStream(fileId);
+      const chunks = [];
+      
+      stream.on('data', (chunk) => chunks.push(chunk));
+      stream.on('end', () => {
+        const buffer = Buffer.concat(chunks);
+        resolve(buffer.toString('utf8'));
+      });
+      stream.on('error', (err) => reject(err));
+    });
 
     const parsedJson = JSON.parse(rawContent.trim());
     const jsonString = JSON.stringify(parsedJson);
