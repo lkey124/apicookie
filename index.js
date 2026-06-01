@@ -1,8 +1,8 @@
 import TelegramBot from 'node-telegram-bot-api';
 import http from 'http';
-import https from 'https'; // Dùng thư viện mạng nguyên thủy, tương thích 100% mọi Server
+import https from 'https'; 
 
-const VERSION = '3.0.0'; // Phiên bản v3.0.0 chống sập ngầm
+const VERSION = '3.0.1'; // Bản v3.0.1 - Vá lỗi ghép chuỗi nhị phân & lọc BOM
 const TOKEN = process.env.TELE_TOKEN;
 const TARGET_SERVER_URL = process.env.TARGET_URL || 'https://he-thong-cua-ban.com/login-endpoint';
 const PORT = process.env.PORT || 3000;
@@ -12,7 +12,6 @@ if (!TOKEN) {
   process.exit(1);
 }
 
-// Bộ nhớ tạm lưu lịch sử link
 const userHistory = {}; 
 
 function getExpirationTime(parsedJson) {
@@ -32,7 +31,6 @@ function getExpirationTime(parsedJson) {
   return minExpiry === Infinity ? Date.now() + 24 * 60 * 60 * 1000 : minExpiry;
 }
 
-// Mở cổng mạng giữ cho Render luôn "Live"
 http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
   res.end(`Bot Telegram phiên bản v${VERSION} đang chạy online 24/7!`);
@@ -54,11 +52,14 @@ const quickMenu = {
   }
 };
 
-// Hàm xử lý lõi (Dùng chung cho cả Text và File để không bao giờ lỗi)
+// Hàm xử lý lõi
 async function processJsonAndSendLink(chatId, jsonText, sourceName) {
   const startTime = Date.now();
   try {
-    const parsedJson = JSON.parse(jsonText.trim());
+    // 🚀 BỘ LỌC TỐI THƯỢNG: Xóa sạch ký tự BOM vô hình và các khoảng trắng rác
+    const cleanText = jsonText.replace(/^\uFEFF/, '').trim();
+    const parsedJson = JSON.parse(cleanText);
+    
     const jsonString = JSON.stringify(parsedJson);
     const safeToken = Buffer.from(jsonString).toString('base64');
     const finalLoginLink = `${TARGET_SERVER_URL}?auth_token=${safeToken}`;
@@ -75,18 +76,18 @@ async function processJsonAndSendLink(chatId, jsonText, sourceName) {
       ...inlineKeyboard
     });
   } catch (error) {
-    await bot.sendMessage(chatId, `⚠️ *Lỗi:* Dữ liệu từ \`${sourceName}\` không phải cấu trúc JSON hợp lệ.`, {
+    // In thêm lý do lỗi chi tiết để bắt bệnh nếu còn sai
+    await bot.sendMessage(chatId, `⚠️ *Lỗi:* Dữ liệu từ \`${sourceName}\` không phải cấu trúc JSON hợp lệ.\n_(Chi tiết mã lỗi: ${error.message})_`, {
       parse_mode: 'Markdown',
       ...quickMenu
     });
   }
 }
 
-// GOM CHUNG XỬ LÝ VÀO 1 LUỒNG SỰ KIỆN DUY NHẤT
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
 
-  // 1. NẾU BẠN GỬI CHỮ (TEXT)
+  // 1. XỬ LÝ KHI DÁN CHỮ (TEXT)
   if (msg.text) {
     const text = msg.text.trim();
     
@@ -120,11 +121,10 @@ bot.on('message', async (msg) => {
       return bot.sendMessage(chatId, guideText, { parse_mode: 'Markdown', ...quickMenu });
     }
 
-    // Xử lý nội dung văn bản JSON
     return processJsonAndSendLink(chatId, text, `Văn bản dán lúc ${new Date().toLocaleTimeString('vi-VN')}`);
   }
 
-  // 2. NẾU BẠN GỬI FILE (DOCUMENT)
+  // 2. XỬ LÝ KHI GỬI FILE (DOCUMENT)
   if (msg.document) {
     const fileId = msg.document.file_id;
     const fileName = msg.document.file_name || 'file_json.json';
@@ -133,17 +133,20 @@ bot.on('message', async (msg) => {
     try {
       loadingMsg = await bot.sendMessage(chatId, `⏳ Đang tải và đọc dữ liệu từ file: \`${fileName}\`...`, { parse_mode: 'Markdown' });
 
-      // Lấy file path từ Telegram API
       const file = await bot.getFile(fileId);
       const fileUrl = `https://api.telegram.org/file/bot${TOKEN}/${file.file_path}`;
 
-      // Dùng https nguyên thủy để tải trực tiếp luồng nhị phân (Chấp mọi phiên bản Node.js)
       const rawContent = await new Promise((resolve, reject) => {
         https.get(fileUrl, (res) => {
-          if (res.statusCode !== 200) return reject(new Error('Lỗi từ Telegram API'));
-          let data = '';
-          res.on('data', chunk => data += chunk);
-          res.on('end', () => resolve(data));
+          if (res.statusCode !== 200) return reject(new Error(`Lỗi từ Telegram API: ${res.statusCode}`));
+          
+          // 🚀 GIẢI PHÁP LÕI NHỊ PHÂN: Gom Buffer cực kỳ an toàn
+          const chunks = [];
+          res.on('data', chunk => chunks.push(chunk));
+          res.on('end', () => {
+            const buffer = Buffer.concat(chunks);
+            resolve(buffer.toString('utf8'));
+          });
         }).on('error', reject);
       });
 
