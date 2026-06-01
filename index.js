@@ -2,7 +2,7 @@ import TelegramBot from 'node-telegram-bot-api';
 import http from 'http';
 import https from 'https'; 
 
-const VERSION = '3.0.1'; // Bản v3.0.1 - Vá lỗi ghép chuỗi nhị phân & lọc BOM
+const VERSION = '3.0.2'; // Bản v3.0.2 - Chuyển sang định dạng HTML siêu an toàn
 const TOKEN = process.env.TELE_TOKEN;
 const TARGET_SERVER_URL = process.env.TARGET_URL || 'https://he-thong-cua-ban.com/login-endpoint';
 const PORT = process.env.PORT || 3000;
@@ -56,7 +56,6 @@ const quickMenu = {
 async function processJsonAndSendLink(chatId, jsonText, sourceName) {
   const startTime = Date.now();
   try {
-    // 🚀 BỘ LỌC TỐI THƯỢNG: Xóa sạch ký tự BOM vô hình và các khoảng trắng rác
     const cleanText = jsonText.replace(/^\uFEFF/, '').trim();
     const parsedJson = JSON.parse(cleanText);
     
@@ -71,14 +70,14 @@ async function processJsonAndSendLink(chatId, jsonText, sourceName) {
 
     const inlineKeyboard = { reply_markup: { inline_keyboard: [[{ text: '🌐 Mở liên kết đăng nhập ngay', url: finalLoginLink }]] } };
     
-    await bot.sendMessage(chatId, `✅ *Xử lý thành công!*\n\n📁 Nguồn: \`${sourceName}\`\n🔗 *Link đăng nhập trực tiếp:*\n${finalLoginLink}\n\n⚡ *Thời gian tính toán:* \`${executionTime} ms\``, {
-      parse_mode: 'Markdown',
+    // 🚀 Dùng định dạng HTML an toàn: <b> (in đậm), <i> (in nghiêng), <code> (khối code)
+    await bot.sendMessage(chatId, `✅ <b>Xử lý thành công!</b>\n\n📁 Nguồn: <code>${sourceName}</code>\n🔗 <b>Link đăng nhập trực tiếp:</b>\n${finalLoginLink}\n\n⚡ <b>Thời gian tính toán:</b> <code>${executionTime} ms</code>`, {
+      parse_mode: 'HTML',
       ...inlineKeyboard
     });
   } catch (error) {
-    // In thêm lý do lỗi chi tiết để bắt bệnh nếu còn sai
-    await bot.sendMessage(chatId, `⚠️ *Lỗi:* Dữ liệu từ \`${sourceName}\` không phải cấu trúc JSON hợp lệ.\n_(Chi tiết mã lỗi: ${error.message})_`, {
-      parse_mode: 'Markdown',
+    await bot.sendMessage(chatId, `⚠️ <b>Lỗi:</b> Dữ liệu từ <code>${sourceName}</code> không phải cấu trúc JSON hợp lệ.\n<i>(Chi tiết mã lỗi: ${error.message})</i>`, {
+      parse_mode: 'HTML',
       ...quickMenu
     });
   }
@@ -87,13 +86,12 @@ async function processJsonAndSendLink(chatId, jsonText, sourceName) {
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
 
-  // 1. XỬ LÝ KHI DÁN CHỮ (TEXT)
   if (msg.text) {
     const text = msg.text.trim();
     
     if (text.startsWith('/start') || text === '🔄 Khởi động lại Bot (/start)') {
-      const welcomeText = `👋 Xin chào *${msg.from.first_name}*!\n\n🤖 Phiên bản hiện tại: *v${VERSION}*\n\nTôi là Bot tự động tạo link đăng nhập từ mã JSON.\n\n📥 *Cách sử dụng:* \n👉 *Cách 1:* dán trực tiếp đoạn chữ JSON vào ô chat.\n👉 *Cách 2:* Gửi một file chứa mã JSON (.txt hoặc .json).`;
-      return bot.sendMessage(chatId, welcomeText, { parse_mode: 'Markdown', ...quickMenu });
+      const welcomeText = `👋 Xin chào <b>${msg.from.first_name}</b>!\n\n🤖 Phiên bản hiện tại: <b>v${VERSION}</b>\n\nTôi là Bot tự động tạo link đăng nhập từ mã JSON.\n\n📥 <b>Cách sử dụng:</b> \n👉 <b>Cách 1:</b> dán trực tiếp đoạn chữ JSON vào ô chat.\n👉 <b>Cách 2:</b> Gửi một file chứa mã JSON (.txt hoặc .json).`;
+      return bot.sendMessage(chatId, welcomeText, { parse_mode: 'HTML', ...quickMenu });
     }
 
     if (text === '📜 Lịch sử link còn hạn') {
@@ -106,32 +104,31 @@ bot.on('message', async (msg) => {
         return bot.sendMessage(chatId, '📭 Lịch sử trống hoặc tất cả link cookies cũ của bạn đã hết hạn sử dụng!', quickMenu);
       }
 
-      let historyText = '📜 *DANH SÁCH LINK ĐĂNG NHẬP CÒN HẠN:*\n\n';
+      let historyText = '📜 <b>DANH SÁCH LINK ĐĂNG NHẬP CÒN HẠN:</b>\n\n';
       const inlineButtons = [];
       validLinks.forEach((item, index) => {
         const hoursLeft = ((item.expiresAt - now) / 1000 / 60 / 60).toFixed(1);
-        historyText += `${index + 1}. 📄 \`${item.name}\`\n⏳ Hạn dùng: Còn khoảng *${hoursLeft} giờ*\n\n`;
+        historyText += `${index + 1}. 📄 <code>${item.name}</code>\n⏳ Hạn dùng: Còn khoảng <b>${hoursLeft} giờ</b>\n\n`;
         inlineButtons.push([{ text: `🌐 Mở link số ${index + 1}`, url: item.link }]);
       });
-      return bot.sendMessage(chatId, historyText, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: inlineButtons } });
+      return bot.sendMessage(chatId, historyText, { parse_mode: 'HTML', reply_markup: { inline_keyboard: inlineButtons } });
     }
 
     if (text === '📋 Xem hướng dẫn định dạng JSON') {
-      const guideText = `📝 *Cấu trúc mẫu JSON hợp lệ:*\n\n\`\`\`json\n{\n  "username": "admin",\n  "role": "user",\n  "session": "123456"\n}\n\`\`\``;
-      return bot.sendMessage(chatId, guideText, { parse_mode: 'Markdown', ...quickMenu });
+      const guideText = `📝 <b>Cấu trúc mẫu JSON hợp lệ:</b>\n\n<pre>{\n  "username": "admin",\n  "role": "user",\n  "session": "123456"\n}</pre>`;
+      return bot.sendMessage(chatId, guideText, { parse_mode: 'HTML', ...quickMenu });
     }
 
     return processJsonAndSendLink(chatId, text, `Văn bản dán lúc ${new Date().toLocaleTimeString('vi-VN')}`);
   }
 
-  // 2. XỬ LÝ KHI GỬI FILE (DOCUMENT)
   if (msg.document) {
     const fileId = msg.document.file_id;
     const fileName = msg.document.file_name || 'file_json.json';
     let loadingMsg;
 
     try {
-      loadingMsg = await bot.sendMessage(chatId, `⏳ Đang tải và đọc dữ liệu từ file: \`${fileName}\`...`, { parse_mode: 'Markdown' });
+      loadingMsg = await bot.sendMessage(chatId, `⏳ Đang tải và đọc dữ liệu từ file: <code>${fileName}</code>...`, { parse_mode: 'HTML' });
 
       const file = await bot.getFile(fileId);
       const fileUrl = `https://api.telegram.org/file/bot${TOKEN}/${file.file_path}`;
@@ -139,8 +136,6 @@ bot.on('message', async (msg) => {
       const rawContent = await new Promise((resolve, reject) => {
         https.get(fileUrl, (res) => {
           if (res.statusCode !== 200) return reject(new Error(`Lỗi từ Telegram API: ${res.statusCode}`));
-          
-          // 🚀 GIẢI PHÁP LÕI NHỊ PHÂN: Gom Buffer cực kỳ an toàn
           const chunks = [];
           res.on('data', chunk => chunks.push(chunk));
           res.on('end', () => {
@@ -156,7 +151,4 @@ bot.on('message', async (msg) => {
     } catch (error) {
       console.error("Lỗi khi xử lý file:", error);
       if (loadingMsg) bot.deleteMessage(chatId, loadingMsg.message_id).catch(() => {});
-      return bot.sendMessage(chatId, `❌ *Thất bại:* Không thể đọc file.`, { parse_mode: 'Markdown', ...quickMenu });
-    }
-  }
-});
+      return bot.sendMessage(chatId, `❌ <b>Thất bại:</b> Không thể đọc file.`, { parse_mode: 'HTML', ...
