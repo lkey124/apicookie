@@ -70,7 +70,6 @@ async function processJsonAndSendLink(chatId, jsonText, sourceName) {
 
     const inlineKeyboard = { reply_markup: { inline_keyboard: [[{ text: '🌐 Mở liên kết đăng nhập ngay', url: finalLoginLink }]] } };
     
-    // 🚀 Dùng định dạng HTML an toàn: <b> (in đậm), <i> (in nghiêng), <code> (khối code)
     await bot.sendMessage(chatId, `✅ <b>Xử lý thành công!</b>\n\n📁 Nguồn: <code>${sourceName}</code>\n🔗 <b>Link đăng nhập trực tiếp:</b>\n${finalLoginLink}\n\n⚡ <b>Thời gian tính toán:</b> <code>${executionTime} ms</code>`, {
       parse_mode: 'HTML',
       ...inlineKeyboard
@@ -151,4 +150,7 @@ bot.on('message', async (msg) => {
     } catch (error) {
       console.error("Lỗi khi xử lý file:", error);
       if (loadingMsg) bot.deleteMessage(chatId, loadingMsg.message_id).catch(() => {});
-      return bot.sendMessage(chatId, `❌ <b>Thất bại:</b> Không thể đọc file.`, { parse_mode: 'HTML', ...
+      return bot.sendMessage(chatId, `❌ <b>Thất bại:</b> Không thể đọc file.`, { parse_mode: 'HTML', ...quickMenu });
+    }
+  }
+});
